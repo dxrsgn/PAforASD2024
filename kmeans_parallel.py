@@ -1,8 +1,9 @@
 import numpy as np
-from numba import cuda
+from numba import cuda, float64, int64, int32, void
+from math import sqrt
 
 
-@cuda.jit(cache=True)
+@cuda.jit(void(float64[:, :], float64[:,:], float64[:, :], int64, int64, int64))
 def centr_pts_dist_kernel(
     data,
     centroids,
@@ -31,11 +32,11 @@ def centr_pts_dist_kernel(
         dist = 0.0
         for feat in range(num_features):
             diff = data[pt_idx, feat] - centroids[centr_idx, feat]
-            dist += diff * diff
-        distances[pt_idx, centr_idx] = dist
+            dist = dist + diff * diff
+        distances[pt_idx, centr_idx] = sqrt(dist)
 
 
-@cuda.jit(cache=True)
+@cuda.jit(void(float64[:,:], int32[:], int64, int64))
 def argmin_kernel(
     distances,
     labels,
@@ -69,7 +70,7 @@ def argmin_kernel(
         labels[pt_idx] = min_idx
 
 
-@cuda.jit(cache=True)
+@cuda.jit(void(float64[:,:], int32[:], float64[:,:], float64[:,:], int32[:], int64, int64))
 def centr_sum_kernel(
     data,
     labels,
@@ -146,9 +147,9 @@ class KMeansCuda:
 
         # Allocate device arrays
         self.dists_cu = cuda.device_array((num_points, self.n_clusters), dtype=np.float64)
-        self.labels_cu = cuda.device_array((num_points,), dtype=np.int64)
-        self.part_counts_cu = cuda.device_array((self.n_clusters,), dtype=np.float64)
-        self.part_sums_cu = cuda.device_array((self.n_clusters, num_features), dtype=np.float64)
+        self.labels_cu = cuda.device_array((num_points), dtype=np.int32)
+        #self.part_counts_cu = cuda.device_array((self.n_clusters), dtype=np.int32)
+        #self.part_sums_cu = cuda.device_array((self.n_clusters, num_features), dtype=np.float64)
 
         # Transfer data to the device
         self.X_cu = cuda.to_device(X)
@@ -169,7 +170,6 @@ class KMeansCuda:
         labels : 1D array (num_points,)
             Index of the cluster each sample belongs to.
         """
-        # Randomly initialize centroids from the dataset
         c_indices = np.random.choice(X.shape[0], self.n_clusters, replace=False)
         centroids = X[c_indices]
 
@@ -180,15 +180,12 @@ class KMeansCuda:
         threads_2d = (self.n_threads, self.n_threads)
         threads_1d = self.n_threads
 
-        # Main k-means loop
         for i in range(self.max_iter):
             print(f"Iteration {i+1}/{self.max_iter}\r", end="")
 
-            # Calculate grid size for the distance kernel
             blocks_per_grid_x = (X.shape[0] + threads_2d[0] - 1) // threads_2d[0]
             blocks_per_grid_y = (self.n_clusters + threads_2d[1] - 1) // threads_2d[1]
             blocks_2d = (blocks_per_grid_x, blocks_per_grid_y)
-
             # Compute distances between points and centroids
             centr_pts_dist_kernel[blocks_2d, threads_2d](
                 self.X_cu,
@@ -199,9 +196,7 @@ class KMeansCuda:
                 self.n_clusters
             )
 
-            # Calculate grid size for the argmin and sum kernels (1D)
             blocks_1d = (X.shape[0] + threads_1d - 1) // threads_1d
-
             # Assign each point to the closest centroid
             argmin_kernel[blocks_1d, threads_1d](
                 self.dists_cu,
@@ -210,6 +205,10 @@ class KMeansCuda:
                 self.n_clusters
             )
 
+            #print(self.labels_cu.copy_to_host())
+            # Could be optimized probably (for example init these arrays on cuda once and only zeroe them in loop)
+            self.part_counts_cu = cuda.to_device(np.zeros((self.n_clusters), dtype=np.int32))
+            self.part_sums_cu = cuda.to_device(np.zeros((self.n_clusters, X.shape[1]), dtype=np.float64))
             # Accumulate sums and counts for new centroid calculation
             centr_sum_kernel[blocks_1d, threads_1d](
                 self.X_cu,
@@ -220,18 +219,18 @@ class KMeansCuda:
                 X.shape[0],
                 X.shape[1]
             )
+            cuda.synchronize()
 
-            # Copy partial sums/counts back to host
+            # Copy partial sums/counts back to cpu
             part_sums = self.part_sums_cu.copy_to_host()
             part_counts = self.part_counts_cu.copy_to_host()
-
-            # Compute new centroids on the host
+            # Compute new centroids on the cpu
             new_centroids = np.zeros((self.n_clusters, X.shape[1]), dtype=np.float64)
             for k in range(self.n_clusters):
                 count = part_counts[k]
                 if count > 0:
                     new_centroids[k] = part_sums[k] / count
-
+            #print(new_centroids)
             # Check for convergence
             if np.linalg.norm(new_centroids - centroids) < self.tol:
                 break
@@ -239,6 +238,5 @@ class KMeansCuda:
             centroids = new_centroids
             self.centroids_cu = cuda.to_device(centroids)
 
-        # Return final centroids and labels (copied back to host)
         return centroids, self.labels_cu.copy_to_host()
 
