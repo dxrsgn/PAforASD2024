@@ -22,6 +22,15 @@ pip install -r requirements.txt
 ```
 ./experiment.sh
 ```
+Troubleshooting:  
+```
+numba.cuda.cudadrv.driver.CudaAPIError: [100] Call to cuInit results in CUDA_ERROR_NO_DEVICE
+```
+Such exception can occur because numba can't find CUDA lib, so set up your LD_LIBRARY_PATH and NUMBA_CUDA_DRIVER to CUDA paths, e.g.:
+```
+export LD_LIBRARY_PATH="/usr/lib/wsl/lib/"
+export NUMBA_CUDA_DRIVER="/usr/lib/wsl/lib/libcuda.so.1"
+```
 
 ## Data
 Data is automatically generated on behchmark run using sklearn.datasets.make_blobs with specified random seed.  
