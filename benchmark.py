@@ -6,7 +6,7 @@ from sklearn.datasets import make_blobs
 from kmeans_sequential import KMeansSequential
 from kmeans_parallel import KMeansCuda
 
-SEED = 0
+SEED = 1337
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -33,4 +33,8 @@ if __name__ == "__main__":
     elapsed_parallel = t1 - t0
     print(f"Parallel KMeans execution time (s): {elapsed_parallel}")
     print(f"Correctnes check: {np.allclose(centroids_seq,centroids_para)}")
-    print(f"Speedup (sequential_time/parallel_time): {elapsed_seq/elapsed_parallel}")
+    speedup = elapsed_seq/elapsed_parallel
+    print(f"Speedup (sequential_time/parallel_time): {speedup}")
+
+    with open("results.txt", "a+") as f:
+        f.write(f"{n_threads},{speedup}\n")
