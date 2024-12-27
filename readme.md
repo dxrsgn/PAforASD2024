@@ -16,7 +16,7 @@ cd PAforASD2024
 2. Install cuda toolkit  
 3. Set up enviroment:  
 ```
-pip install -r requiremnts.txt
+pip install -r requirements.txt
 ```
 4. Run the benchmark: 
 ```
